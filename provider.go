@@ -86,6 +86,7 @@ func newProvider(cfg providerConfig, key string) *provider {
 }
 
 // generate یک پاسخ از این provider میگیرد
+// generate یک پاسخ از این provider میگیرد
 func (p *provider) generate(ctx context.Context, system, prompt string) (string, error) {
 	messages := []chatMessage{
 		{Role: "system", Content: system},
@@ -124,9 +125,12 @@ func (p *provider) generate(ctx context.Context, system, prompt string) (string,
 		return "", fmt.Errorf("read body: %w", err)
 	}
 
+	// DEBUG - لاگ کردن response خام
+	slog.Info("raw response", "body", string(respBody))
+
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", fmt.Errorf("unmarshal: %w", err)
+		return "", fmt.Errorf("unmarshal: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
 	}
 
 	// بررسی خطا از API
