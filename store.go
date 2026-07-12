@@ -82,11 +82,11 @@ func (s *store) getContext(chatID int64) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("مکالمه قبلی:\n")
+	sb.WriteString("Previous conversation:\n")
 	for _, e := range mem.entries {
 		sb.WriteString(e.userLine)
 		sb.WriteByte('\n')
-		sb.WriteString("ربات: ")
+		sb.WriteString("Bot: ")
 		sb.WriteString(e.botResp)
 		sb.WriteByte('\n')
 	}

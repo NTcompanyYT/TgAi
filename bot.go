@@ -368,14 +368,14 @@ func (b *bot) handleUpdate(u update) {
 	txt = strings.TrimSpace(txt)
 	txt = sanitize(txt)
 	if txt == "" {
-		_ = b.tg.sendMessage(msg.Chat.ID, "⚠️ متن خالی یا نامعتبر.", msg.MessageID)
+		_ = b.tg.sendMessage(msg.Chat.ID, "⚠️ Empty or invalid text.", msg.MessageID)
 		return
 	}
 
 	// ─── Rate Limit ─────────────────────────────────────────
 	if !b.store.checkRPM(msg.From.ID) {
 		_ = b.tg.sendMessage(msg.Chat.ID,
-			"⏳ به سقف درخواست رسیده‌اید. کمی صبر کنید.",
+			"⏳ Rate limit reached. Please wait a moment.",
 			msg.MessageID)
 		return
 	}
@@ -420,14 +420,14 @@ func (b *bot) handleUpdate(u update) {
 func (b *bot) handleImage(msg *message, prompt string) {
 	if prompt == "" {
 		_ = b.tg.sendMessage(msg.Chat.ID,
-			"❌ توصیف تصویر را بنویسید.\nمثال: /image a futuristic city",
+			"❌ Please provide an image description.\nExample: /image a futuristic city",
 			msg.MessageID)
 		return
 	}
 
 	if !b.store.checkRPM(msg.From.ID) {
 		_ = b.tg.sendMessage(msg.Chat.ID,
-			"⏳ به سقف درخواست رسیده‌اید.",
+			"⏳ Rate limit reached. Please wait.",
 			msg.MessageID)
 		return
 	}
@@ -449,7 +449,7 @@ func (b *bot) handleImage(msg *message, prompt string) {
 	if err != nil {
 		slog.Error("fetch image failed", "err", err)
 		_ = b.tg.sendMessage(msg.Chat.ID,
-			"⚠️ مشکل در دریافت تصویر. دوباره تلاش کنید.",
+			"⚠️ Failed to fetch image. Please try again.",
 			msg.MessageID)
 		return
 	}
@@ -458,23 +458,23 @@ func (b *bot) handleImage(msg *message, prompt string) {
 	if err := b.tg.sendPhotoBytes(msg.Chat.ID, filename, data, caption, msg.MessageID); err != nil {
 		slog.Error("send photo failed", "err", err)
 		_ = b.tg.sendMessage(msg.Chat.ID,
-			"⚠️ مشکل در ارسال تصویر. دوباره تلاش کنید.",
+			"⚠️ Failed to send image. Please try again.",
 			msg.MessageID)
 	}
 }
 
 func (b *bot) sendError(chatID int64, replyToID int, err error) {
 	e := err.Error()
-	msg := "⚠️ خطا در پردازش درخواست\n\n"
+	msg := "⚠️ Request processing error\n\n"
 	switch {
 	case strings.Contains(e, "timeout") || strings.Contains(e, "deadline"):
-		msg += "زمان پاسخ طولانی شد. دوباره تلاش کنید."
+		msg += "Response timeout. Please try again."
 	case strings.Contains(e, "rate") || strings.Contains(e, "quota"):
-		msg += "ترافیک سرور بالاست. چند لحظه صبر کنید."
+		msg += "High server traffic. Please wait a moment."
 	case strings.Contains(e, "safety") || strings.Contains(e, "blocked"):
-		msg += "محتوای پیام با معیارهای ایمنی سازگار نیست."
+		msg += "Content doesn't meet safety guidelines."
 	default:
-		msg += "لطفاً دوباره تلاش کنید."
+		msg += "Please try again."
 	}
 	_ = b.tg.sendMessage(chatID, msg, replyToID)
 }

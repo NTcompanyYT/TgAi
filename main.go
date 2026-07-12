@@ -174,9 +174,9 @@ func main() {
 	// ─── Admin Notify ─────────────────────────────────────
 	if adminID != 0 {
 		_ = tg.sendMessage(adminID, fmt.Sprintf(
-			"🟢 ربات راه‌اندازی شد!\n🤖 @%s\n🕐 %s",
+			"🟢 Bot started successfully!\n\n🤖 @%s\n📅 %s UTC",
 			tg.username,
-			time.Now().Format("15:04:05"),
+			time.Now().UTC().Format("2006-01-02 15:04:05"),
 		), 0)
 	}
 
