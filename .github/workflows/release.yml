@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - name: Get date
+        id: date
+        run: echo "DATE=$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Build all platforms
+        run: |
+          mkdir -p dist
+
+          GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o dist/tgai-linux-amd64 .
+          GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o dist/tgai-linux-arm64 .
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/tgai-windows-amd64.exe .
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o dist/tgai-macos-amd64 .
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o dist/tgai-macos-arm64 .
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Delete old release
+        run: gh release delete latest --yes || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "latest"
+          name: "TgAi - ${{ steps.date.outputs.DATE }}"
+          body: |
+            ## TgAi - ${{ steps.date.outputs.DATE }}
+
+            | Platform | File |
+            |----------|------|
+            | Linux x64 | `tgai-linux-amd64` |
+            | Linux ARM64 | `tgai-linux-arm64` |
+            | Windows x64 | `tgai-windows-amd64.exe` |
+            | macOS x64 | `tgai-macos-amd64` |
+            | macOS Apple Silicon | `tgai-macos-arm64` |
+
+            ### Quick Start
+            ```bash
+            chmod +x tgai-linux-amd64
+            export TELEGRAM_TOKEN="..."
+            export WEBHOOK_URL="..."
+            export GEMINI_KEY="..."
+            ./tgai-linux-amd64
+            ```
+          files: dist/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
