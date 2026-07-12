@@ -7,13 +7,13 @@ providers:
   # Gemini رایگان - اول امتحان میشه
   - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
     key_env: "GEMINI_KEY"
-    model: "gemini-2.0-flash-exp"
+    model: "gemini-3.1-flash-lite"
     free: true
 
   # Gemini رایگان - fallback اول
   - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
     key_env: "GEMINI_KEY"
-    model: "gemini-1.5-flash"
+    model: "gemini-2.5-flash"
     free: true
 
   # OpenAI - اگر key داشتی
