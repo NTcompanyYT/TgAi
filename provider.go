@@ -17,19 +17,20 @@ import (
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type providerConfig struct {
-	Endpoint string `yaml:"endpoint"`
-	KeyEnv   string `yaml:"key_env"`
-	Model    string `yaml:"model"`
-	Free     bool   `yaml:"free"`
+	Endpoint string   `yaml:"endpoint"`
+	KeyEnv   string   `yaml:"key_env"`
+	Models   []string `yaml:"models"`
+	Free     bool     `yaml:"free"`
 }
 
-type provider struct {
-	cfg    providerConfig
-	key    string
-	client *http.Client
+// providerEntry یک endpoint + یک مدل
+type providerEntry struct {
+	endpoint string
+	key      string
+	model    string
+	client   *http.Client
 }
 
-// OpenAI-compatible request/response
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
@@ -75,46 +76,33 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
+// ─── Entry Generate ───────────────────────────────────────────────────────────
 
-func newProvider(cfg providerConfig, key string) *provider {
-	return &provider{
-		cfg:    cfg,
-		key:    key,
-		client: newHTTPClient(),
-	}
-}
-
-// generate یک پاسخ از این provider میگیرد
-// generate یک پاسخ از این provider میگیرد
-func (p *provider) generate(ctx context.Context, system, prompt string) (string, error) {
+func (e *providerEntry) generate(ctx context.Context, system, prompt string) (string, error) {
 	messages := []chatMessage{
 		{Role: "system", Content: system},
 		{Role: "user", Content: prompt},
 	}
 
-	reqBody := chatRequest{
-		Model:    p.cfg.Model,
+	body, err := json.Marshal(chatRequest{
+		Model:    e.model,
 		Messages: messages,
-	}
-
-	body, err := json.Marshal(reqBody)
+	})
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 
-	url := strings.TrimRight(p.cfg.Endpoint, "/") + "/v1/chat/completions"
+	url := strings.TrimRight(e.endpoint, "/") + "/v1/chat/completions"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("new request: %w", err)
 	}
-
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.key)
+	req.Header.Set("Authorization", "Bearer "+e.key)
 	req.Header.Set("User-Agent", "TelegramBot/1.0")
 
-	resp, err := p.client.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http: %w", err)
 	}
@@ -125,26 +113,22 @@ func (p *provider) generate(ctx context.Context, system, prompt string) (string,
 		return "", fmt.Errorf("read body: %w", err)
 	}
 
-	// DEBUG - لاگ کردن response خام
-	slog.Info("raw response", "body", string(respBody))
-
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", fmt.Errorf("unmarshal: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
+		return "", fmt.Errorf("unmarshal: %w", err)
 	}
 
-	// بررسی خطا از API
 	if chatResp.Error != nil {
 		return "", fmt.Errorf("api error: %s", chatResp.Error.Message)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response from %s/%s", p.cfg.Endpoint, p.cfg.Model)
+		return "", fmt.Errorf("empty response: %s/%s", e.endpoint, e.model)
 	}
 
 	text := strings.TrimSpace(chatResp.Choices[0].Message.Content)
 	if text == "" {
-		return "", fmt.Errorf("empty content from %s/%s", p.cfg.Endpoint, p.cfg.Model)
+		return "", fmt.Errorf("empty content: %s/%s", e.endpoint, e.model)
 	}
 
 	return text, nil
@@ -153,8 +137,8 @@ func (p *provider) generate(ctx context.Context, system, prompt string) (string,
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 type providerRouter struct {
-	providers []*provider
-	system    string
+	entries []*providerEntry
+	system  string
 }
 
 func newProviderRouter(cfgs []providerConfig, keys map[string]string, system string) (*providerRouter, error) {
@@ -162,30 +146,39 @@ func newProviderRouter(cfgs []providerConfig, keys map[string]string, system str
 		return nil, fmt.Errorf("no providers configured")
 	}
 
-	providers := make([]*provider, 0, len(cfgs))
+	client := newHTTPClient()
+	entries := make([]*providerEntry, 0)
+
 	for _, cfg := range cfgs {
 		key := keys[cfg.KeyEnv]
 		if key == "" {
 			slog.Warn("provider key not set, skipping",
-				"model", cfg.Model,
 				"key_env", cfg.KeyEnv,
 			)
 			continue
 		}
-		providers = append(providers, newProvider(cfg, key))
-		slog.Info("provider loaded",
-			"model", cfg.Model,
-			"free", cfg.Free,
-		)
+
+		for _, model := range cfg.Models {
+			entries = append(entries, &providerEntry{
+				endpoint: cfg.Endpoint,
+				key:      key,
+				model:    model,
+				client:   client,
+			})
+			slog.Info("provider loaded",
+				"model", model,
+				"free", cfg.Free,
+			)
+		}
 	}
 
-	if len(providers) == 0 {
+	if len(entries) == 0 {
 		return nil, fmt.Errorf("no providers with valid keys found")
 	}
 
 	return &providerRouter{
-		providers: providers,
-		system:    system,
+		entries: entries,
+		system:  system,
 	}, nil
 }
 
@@ -193,18 +186,18 @@ func newProviderRouter(cfgs []providerConfig, keys map[string]string, system str
 func (r *providerRouter) generate(ctx context.Context, prompt string) (string, error) {
 	var lastErr error
 
-	for i, p := range r.providers {
+	for i, e := range r.entries {
 		slog.Info("trying provider",
-			"model", p.cfg.Model,
+			"model", e.model,
 			"attempt", i+1,
-			"total", len(r.providers),
+			"total", len(r.entries),
 		)
 
-		text, err := p.generate(ctx, r.system, prompt)
+		text, err := e.generate(ctx, r.system, prompt)
 		if err == nil {
 			if i > 0 {
 				slog.Info("fallback succeeded",
-					"model", p.cfg.Model,
+					"model", e.model,
 					"after_attempts", i,
 				)
 			}
@@ -213,21 +206,19 @@ func (r *providerRouter) generate(ctx context.Context, prompt string) (string, e
 
 		lastErr = err
 		slog.Warn("provider failed",
-			"model", p.cfg.Model,
+			"model", e.model,
 			"err", err,
 		)
 
-		// اگر خطا قابل retry نیست، بقیه را امتحان نکن
 		if !isRetryable(err.Error()) {
-			slog.Error("non-retryable error",
-				"model", p.cfg.Model,
+			slog.Error("non-retryable error, stopping",
+				"model", e.model,
 				"err", err,
 			)
 			break
 		}
 
-		// صبر با exponential backoff قبل از provider بعدی
-		if i < len(r.providers)-1 {
+		if i < len(r.entries)-1 {
 			wait := backoff(i)
 			slog.Info("waiting before next provider", "wait", wait)
 			select {
@@ -238,10 +229,9 @@ func (r *providerRouter) generate(ctx context.Context, prompt string) (string, e
 		}
 	}
 
-	return "", fmt.Errorf("all providers failed, last error: %w", lastErr)
+	return "", fmt.Errorf("all providers failed: %w", lastErr)
 }
 
-// isRetryable بررسی میکند خطا قابل retry است
 func isRetryable(errStr string) bool {
 	lower := strings.ToLower(errStr)
 	for _, p := range []string{
@@ -257,7 +247,6 @@ func isRetryable(errStr string) bool {
 	return false
 }
 
-// backoff زمان انتظار exponential با jitter
 func backoff(attempt int) time.Duration {
 	base := time.Second
 	max := 30 * time.Second

@@ -4,35 +4,31 @@
 # ===================================================
 
 providers:
-  # Gemini رایگان - اول امتحان میشه
   - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
     key_env: "GEMINI_KEY"
-    model: "gemini-3.1-flash-lite"
+    models:
+      - "gemini-3.5-flash"
+      - "gemini-3-flash-preview"
+      - "gemini-3.1-flash-lite"
+      - "gemini-2.5-flash"
+      - "gemini-2.5-pro"
     free: true
 
-  # Gemini رایگان - fallback اول
-  - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
-    key_env: "GEMINI_KEY"
-    model: "gemini-2.5-flash"
-    free: true
-
-  # OpenAI - اگر key داشتی
+  # OpenAI
   # - endpoint: "https://api.openai.com"
   #   key_env: "OPENAI_KEY"
-  #   model: "gpt-4o-mini"
+  #   models:
+  #     - "gpt-4o-mini"
+  #     - "gpt-3.5-turbo"
   #   free: false
 
-  # Groq - رایگان و سریع
+  # Groq (free)
   # - endpoint: "https://api.groq.com/openai"
   #   key_env: "GROQ_KEY"
-  #   model: "llama-3.1-8b-instant"
+  #   models:
+  #     - "llama-3.1-8b-instant"
+  #     - "mixtral-8x7b-32768"
   #   free: true
-
-  # Claude
-  # - endpoint: "https://api.anthropic.com"
-  #   key_env: "CLAUDE_KEY"
-  #   model: "claude-3-haiku-20240307"
-  #   free: false
 
 bot:
   rpm_limit: 10
