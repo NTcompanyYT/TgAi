@@ -1,0 +1,47 @@
+# ===================================================
+# تنظیمات ربات
+# هر provider که OpenAI-compatible API دارد کار میکند
+# ===================================================
+
+providers:
+  # Gemini رایگان - اول امتحان میشه
+  - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
+    key_env: "GEMINI_KEY"
+    model: "gemini-2.0-flash-exp"
+    free: true
+
+  # Gemini رایگان - fallback اول
+  - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
+    key_env: "GEMINI_KEY"
+    model: "gemini-1.5-flash"
+    free: true
+
+  # OpenAI - اگر key داشتی
+  # - endpoint: "https://api.openai.com"
+  #   key_env: "OPENAI_KEY"
+  #   model: "gpt-4o-mini"
+  #   free: false
+
+  # Groq - رایگان و سریع
+  # - endpoint: "https://api.groq.com/openai"
+  #   key_env: "GROQ_KEY"
+  #   model: "llama-3.1-8b-instant"
+  #   free: true
+
+  # Claude
+  # - endpoint: "https://api.anthropic.com"
+  #   key_env: "CLAUDE_KEY"
+  #   model: "claude-3-haiku-20240307"
+  #   free: false
+
+bot:
+  rpm_limit: 10
+  worker_count: 20
+  queue_size: 500
+  max_context_messages: 10
+  max_message_runes: 400
+
+server:
+  port: "10000"
+  read_timeout: 10
+  write_timeout: 10
