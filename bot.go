@@ -204,6 +204,32 @@ func (c *tgClient) sendMessage(chatID int64, text string, replyToID int) error {
 	return err
 }
 
+func (c *tgClient) sendRichMessage(chatID int64, markdown string, replyToID int) error {
+	if markdown == "" {
+		return nil
+	}
+
+	// محدودیت 32768 کاراکتر طبق مستندات
+	runes := []rune(markdown)
+	if len(runes) > 32768 {
+		markdown = string(runes[:32768])
+	}
+
+	payload := map[string]any{
+		"chat_id": chatID,
+		"rich_message": map[string]any{
+			"markdown": markdown,
+		},
+	}
+
+	if replyToID > 0 {
+		payload["reply_parameters"] = map[string]int{"message_id": replyToID}
+	}
+
+	_, err := c.do("sendRichMessage", payload)
+	return err
+}
+
 func (c *tgClient) sendChatAction(chatID int64, action string) error {
 	_, err := c.do("sendChatAction", map[string]any{
 		"chat_id": chatID,
@@ -412,8 +438,11 @@ func (b *bot) handleUpdate(u update) {
 
 	b.store.saveMessage(msg.Chat.ID, userName+": "+txt, answer)
 
-	if err := b.tg.sendMessage(msg.Chat.ID, answer, msg.MessageID); err != nil {
-		slog.Error("send message failed", "err", err)
+	if err := b.tg.sendRichMessage(msg.Chat.ID, answer, msg.MessageID); err != nil {
+		slog.Warn("rich message failed, falling back to plain text", "err", err)
+		if err := b.tg.sendMessage(msg.Chat.ID, answer, msg.MessageID); err != nil {
+			slog.Error("send message failed", "err", err)
+		}
 	}
 }
 
