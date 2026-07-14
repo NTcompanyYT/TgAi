@@ -307,16 +307,25 @@ func (r *providerRouter) generate(ctx context.Context, prompt string) (string, e
 		lastErr = err
 		slog.Warn("model failed", "model", m.name, "err", err)
 
+		// quota/rate errors -> skip immediately, no backoff
 		if isQuotaError(err.Error()) {
 			slog.Info("quota error, next model", "model", m.name)
 			continue
 		}
 
+		// malformed response -> skip immediately, no backoff
+		if isMalformedError(err.Error()) {
+			slog.Info("malformed response, next model", "model", m.name)
+			continue
+		}
+
+		// unknown non-retryable error -> stop completely
 		if !isRetryable(err.Error()) {
 			slog.Error("non-retryable error", "model", m.name)
 			break
 		}
 
+		// only real transient errors get a backoff wait
 		wait := backoff(attempted)
 		slog.Info("backoff", "wait", wait)
 		select {
@@ -346,12 +355,27 @@ func isQuotaError(errStr string) bool {
 	return false
 }
 
+// isMalformedError: bad/unexpected response shape
+// skip fast, retrying won't help
+func isMalformedError(errStr string) bool {
+	lower := strings.ToLower(errStr)
+	for _, p := range []string{
+		"unmarshal", "array", "empty response",
+		"empty content",
+	} {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isRetryable: real transient errors worth waiting for
 func isRetryable(errStr string) bool {
 	lower := strings.ToLower(errStr)
 	for _, p := range []string{
 		"timeout", "deadline", "overloaded",
 		"503", "502", "500",
-		"unmarshal", "array",
 	} {
 		if strings.Contains(lower, p) {
 			return true
