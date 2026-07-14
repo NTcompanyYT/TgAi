@@ -11,25 +11,26 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ── Config Types ──────────────────────────────────
+
+type modelConfig struct {
+	Name string `yaml:"name"`
+	RPM  int    `yaml:"rpm"`
+	RPD  int    `yaml:"rpd"`
+}
 
 type providerConfig struct {
-	Endpoint string   `yaml:"endpoint"`
-	KeyEnv   string   `yaml:"key_env"`
-	Models   []string `yaml:"models"`
-	Free     bool     `yaml:"free"`
+	Endpoint string        `yaml:"endpoint"`
+	KeyEnv   string        `yaml:"key_env"`
+	Models   []modelConfig `yaml:"models"`
+	Free     bool          `yaml:"free"`
 }
 
-// providerEntry یک endpoint + یک مدل
-type providerEntry struct {
-	endpoint string
-	key      string
-	model    string
-	client   *http.Client
-}
+// ── API Types ─────────────────────────────────────
 
 type chatRequest struct {
 	Model    string        `json:"model"`
@@ -53,40 +54,107 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
-// ─── HTTP Client ──────────────────────────────────────────────────────────────
+// ── Rate Tracker ──────────────────────────────────
 
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 120 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
-			IdleConnTimeout:       90 * time.Second,
-			ForceAttemptHTTP2:     true,
-		},
-		CheckRedirect: func(r *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+type rateTracker struct {
+	mu          sync.Mutex
+	rpmLimit    int
+	rpmRequests []time.Time
+	rpdLimit    int
+	rpdRequests []time.Time
+}
+
+func newRateTracker(rpm, rpd int) *rateTracker {
+	return &rateTracker{
+		rpmLimit: rpm,
+		rpdLimit: rpd,
 	}
 }
 
-// ─── Entry Generate ───────────────────────────────────────────────────────────
+func (r *rateTracker) allow() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-func (e *providerEntry) generate(ctx context.Context, system, prompt string) (string, error) {
-	messages := []chatMessage{
-		{Role: "system", Content: system},
-		{Role: "user", Content: prompt},
+	if r.rpmLimit == 0 || r.rpdLimit == 0 {
+		return false
 	}
 
+	now := time.Now()
+
+	// filter RPM window (1 minute)
+	rpmCut := now.Add(-time.Minute)
+	fresh := r.rpmRequests[:0]
+	for _, t := range r.rpmRequests {
+		if t.After(rpmCut) {
+			fresh = append(fresh, t)
+		}
+	}
+	r.rpmRequests = fresh
+
+	// filter RPD window (24 hours)
+	rpdCut := now.Add(-24 * time.Hour)
+	freshD := r.rpdRequests[:0]
+	for _, t := range r.rpdRequests {
+		if t.After(rpdCut) {
+			freshD = append(freshD, t)
+		}
+	}
+	r.rpdRequests = freshD
+
+	if len(r.rpmRequests) >= r.rpmLimit {
+		return false
+	}
+	if len(r.rpdRequests) >= r.rpdLimit {
+		return false
+	}
+
+	r.rpmRequests = append(r.rpmRequests, now)
+	r.rpdRequests = append(r.rpdRequests, now)
+	return true
+}
+
+func (r *rateTracker) remaining() (rpm, rpd int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+
+	usedRPM := 0
+	cut := now.Add(-time.Minute)
+	for _, t := range r.rpmRequests {
+		if t.After(cut) {
+			usedRPM++
+		}
+	}
+
+	usedRPD := 0
+	cutD := now.Add(-24 * time.Hour)
+	for _, t := range r.rpdRequests {
+		if t.After(cutD) {
+			usedRPD++
+		}
+	}
+
+	return r.rpmLimit - usedRPM, r.rpdLimit - usedRPD
+}
+
+// ── Model Entry ───────────────────────────────────
+
+type modelEntry struct {
+	endpoint string
+	key      string
+	name     string
+	tracker  *rateTracker
+	client   *http.Client
+}
+
+func (e *modelEntry) generate(ctx context.Context, system, prompt string) (string, error) {
 	body, err := json.Marshal(chatRequest{
-		Model:    e.model,
-		Messages: messages,
+		Model: e.name,
+		Messages: []chatMessage{
+			{Role: "system", Content: system},
+			{Role: "user", Content: prompt},
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
@@ -113,32 +181,55 @@ func (e *providerEntry) generate(ctx context.Context, system, prompt string) (st
 		return "", fmt.Errorf("read body: %w", err)
 	}
 
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+	var cr chatResponse
+	if err := json.Unmarshal(respBody, &cr); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)
 	}
 
-	if chatResp.Error != nil {
-		return "", fmt.Errorf("api error: %s", chatResp.Error.Message)
+	if cr.Error != nil {
+		return "", fmt.Errorf("api error [%v]: %s", cr.Error.Code, cr.Error.Message)
 	}
 
-	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response: %s/%s", e.endpoint, e.model)
+	if len(cr.Choices) == 0 {
+		return "", fmt.Errorf("empty response from %s", e.name)
 	}
 
-	text := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	text := strings.TrimSpace(cr.Choices[0].Message.Content)
 	if text == "" {
-		return "", fmt.Errorf("empty content: %s/%s", e.endpoint, e.model)
+		return "", fmt.Errorf("empty content from %s", e.name)
 	}
 
 	return text, nil
 }
 
-// ─── Router ───────────────────────────────────────────────────────────────────
+// ── HTTP Client ───────────────────────────────────
+
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 120 * time.Second,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+		CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// ── Router ────────────────────────────────────────
 
 type providerRouter struct {
-	entries []*providerEntry
-	system  string
+	models []*modelEntry
+	system string
 }
 
 func newProviderRouter(cfgs []providerConfig, keys map[string]string, system string) (*providerRouter, error) {
@@ -147,7 +238,7 @@ func newProviderRouter(cfgs []providerConfig, keys map[string]string, system str
 	}
 
 	client := newHTTPClient()
-	entries := make([]*providerEntry, 0)
+	models := make([]*modelEntry, 0)
 
 	for _, cfg := range cfgs {
 		key := keys[cfg.KeyEnv]
@@ -158,87 +249,109 @@ func newProviderRouter(cfgs []providerConfig, keys map[string]string, system str
 			continue
 		}
 
-		for _, model := range cfg.Models {
-			entries = append(entries, &providerEntry{
+		for _, m := range cfg.Models {
+			if m.RPM == 0 || m.RPD == 0 {
+				slog.Info("model disabled, skipping",
+					"model", m.Name,
+				)
+				continue
+			}
+			models = append(models, &modelEntry{
 				endpoint: cfg.Endpoint,
 				key:      key,
-				model:    model,
+				name:     m.Name,
+				tracker:  newRateTracker(m.RPM, m.RPD),
 				client:   client,
 			})
-			slog.Info("provider loaded",
-				"model", model,
-				"free", cfg.Free,
+			slog.Info("model loaded",
+				"model", m.Name,
+				"rpm", m.RPM,
+				"rpd", m.RPD,
 			)
 		}
 	}
 
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("no providers with valid keys found")
+	if len(models) == 0 {
+		return nil, fmt.Errorf("no models available")
 	}
 
-	return &providerRouter{
-		entries: entries,
-		system:  system,
-	}, nil
+	return &providerRouter{models: models, system: system}, nil
 }
 
-// generate با fallback و exponential backoff
 func (r *providerRouter) generate(ctx context.Context, prompt string) (string, error) {
 	var lastErr error
+	attempted := 0
 
-	for i, e := range r.entries {
-		slog.Info("trying provider",
-			"model", e.model,
-			"attempt", i+1,
-			"total", len(r.entries),
-		)
+	for _, m := range r.models {
+		if !m.tracker.allow() {
+			rpmLeft, rpdLeft := m.tracker.remaining()
+			slog.Info("model rate limited, skipping",
+				"model", m.name,
+				"rpm_left", rpmLeft,
+				"rpd_left", rpdLeft,
+			)
+			continue
+		}
 
-		text, err := e.generate(ctx, r.system, prompt)
+		attempted++
+		slog.Info("trying model", "model", m.name, "attempt", attempted)
+
+		text, err := m.generate(ctx, r.system, prompt)
 		if err == nil {
-			if i > 0 {
-				slog.Info("fallback succeeded",
-					"model", e.model,
-					"after_attempts", i,
-				)
+			if attempted > 1 {
+				slog.Info("fallback succeeded", "model", m.name)
 			}
 			return text, nil
 		}
 
 		lastErr = err
-		slog.Warn("provider failed",
-			"model", e.model,
-			"err", err,
-		)
+		slog.Warn("model failed", "model", m.name, "err", err)
+
+		if isQuotaError(err.Error()) {
+			slog.Info("quota error, next model", "model", m.name)
+			continue
+		}
 
 		if !isRetryable(err.Error()) {
-			slog.Error("non-retryable error, stopping",
-				"model", e.model,
-				"err", err,
-			)
+			slog.Error("non-retryable error", "model", m.name)
 			break
 		}
 
-		if i < len(r.entries)-1 {
-			wait := backoff(i)
-			slog.Info("waiting before next provider", "wait", wait)
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(wait):
-			}
+		wait := backoff(attempted)
+		slog.Info("backoff", "wait", wait)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(wait):
 		}
 	}
 
-	return "", fmt.Errorf("all providers failed: %w", lastErr)
+	if attempted == 0 {
+		return "", fmt.Errorf("all models are rate limited")
+	}
+	return "", fmt.Errorf("all models failed: %w", lastErr)
+}
+
+func isQuotaError(errStr string) bool {
+	lower := strings.ToLower(errStr)
+	for _, p := range []string{
+		"quota", "rate", "limit",
+		"exhausted", "exceeded",
+		"resource", "429",
+	} {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func isRetryable(errStr string) bool {
 	lower := strings.ToLower(errStr)
 	for _, p := range []string{
-		"rate", "quota", "limit", "overloaded",
-		"429", "503", "502", "500",
-		"timeout", "deadline",
-		"not found", "404",
+		"timeout", "deadline", "overloaded",
+		"503", "502", "500",
+		"unmarshal", "array",
 	} {
 		if strings.Contains(lower, p) {
 			return true
@@ -249,8 +362,8 @@ func isRetryable(errStr string) bool {
 
 func backoff(attempt int) time.Duration {
 	base := time.Second
-	max := 30 * time.Second
-	d := base * (1 << min(attempt, 5))
+	max := 15 * time.Second
+	d := base * (1 << min(attempt, 4))
 	if d > max {
 		d = max
 	}

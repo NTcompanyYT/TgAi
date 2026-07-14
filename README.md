@@ -7,10 +7,11 @@ Built by [NTcompanyYT](https://github.com/NTcompanyYT/TgAi)
 ## Features
 
 - Works with Gemini, OpenAI, Claude, Groq, and any OpenAI-compatible provider
+- Smart rate limiting per model (RPM + RPD tracking)
 - Automatic fallback between models
 - Image generation with `/image`
 - Conversation memory
-- Rate limiting & worker pool
+- Worker pool & graceful shutdown
 
 ---
 
@@ -38,7 +39,7 @@ go build -o main .
 | `TELEGRAM_TOKEN` | Your bot token | ✅ |
 | `WEBHOOK_URL` | Your public server URL | ✅ |
 | `GEMINI_KEY` | Gemini API key | ✅ (if using Gemini) |
-| `ADMIN_ID` | Your Telegram numeric ID for notifications | ❌ |
+| `ADMIN_ID` | Your Telegram numeric ID | ❌ |
 
 ### 4. Run
 
@@ -47,7 +48,6 @@ go build -o main .
 export TELEGRAM_TOKEN="..."
 export WEBHOOK_URL="https://your-domain.com"
 export GEMINI_KEY="..."
-
 ./main
 ```
 
@@ -56,7 +56,6 @@ export GEMINI_KEY="..."
 $env:TELEGRAM_TOKEN="..."
 $env:WEBHOOK_URL="https://your-domain.com"
 $env:GEMINI_KEY="..."
-
 ./main
 ```
 
@@ -64,30 +63,22 @@ $env:GEMINI_KEY="..."
 
 ## Adding Providers
 
-Edit `config.yaml` to add any provider you want:
+Edit `config.yaml`:
 
 ```yaml
 providers:
-  # Gemini (free)
   - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
     key_env: "GEMINI_KEY"
-    model: "gemini-2.0-flash-exp"
-    free: true
-
-  # OpenAI
-  # - endpoint: "https://api.openai.com"
-  #   key_env: "OPENAI_KEY"
-  #   model: "gpt-4o-mini"
-  #   free: false
-
-  # Groq (free)
-  # - endpoint: "https://api.groq.com/openai"
-  #   key_env: "GROQ_KEY"
-  #   model: "llama-3.1-8b-instant"
-  #   free: true
+    models:
+      - name: "gemini-3.5-flash"
+        rpm: 5
+        rpd: 20
+      - name: "gemini-3.1-flash-lite"
+        rpm: 15
+        rpd: 500
 ```
 
-Any OpenAI-compatible API works. Just set the endpoint, key, and model.
+Any OpenAI-compatible API works. Set `rpm: 0` or `rpd: 0` to disable a model.
 
 ---
 
@@ -102,7 +93,7 @@ Any OpenAI-compatible API works. Just set the endpoint, key, and model.
 
 ## Deployment
 
-This project is completely free to run. Deploy anywhere:
+This project is completely free to run:
 
 | Platform | Free Plan | Notes |
 |----------|-----------|-------|
@@ -112,7 +103,7 @@ This project is completely free to run. Deploy anywhere:
 | [Koyeb](https://koyeb.com) | ✅ | Direct deploy from GitHub |
 | Your own VPS | - | Any Linux server |
 
-> **Note:** Free plans may sleep after inactivity. Since the bot uses webhooks, it wakes up automatically on the first message.
+> Free plans may sleep after inactivity. The bot wakes up automatically on the first message.
 
 ---
 

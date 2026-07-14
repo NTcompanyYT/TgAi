@@ -1,33 +1,50 @@
-# ===================================================
-# تنظیمات ربات
-# هر provider که OpenAI-compatible API دارد کار میکند
-# ===================================================
+# =========================
+# TgAi Configuration
+# =========================
 
 providers:
   - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
     key_env: "GEMINI_KEY"
     models:
-      - "gemini-3.5-flash"
-      - "gemini-3-flash-preview"
-      - "gemini-3.1-flash-lite"
-      - "gemini-2.5-flash"
-      - "gemini-2.5-pro"
+      - name: "gemini-3.5-flash"
+        rpm: 5
+        rpd: 20
+      - name: "gemini-3-flash-preview"
+        rpm: 5
+        rpd: 20
+      - name: "gemini-3.1-flash-lite"
+        rpm: 15
+        rpd: 500
+      - name: "gemini-2.5-flash"
+        rpm: 5
+        rpd: 20
+      - name: "gemini-2.5-flash-lite"
+        rpm: 10
+        rpd: 20
+      - name: "gemma-4-31b-it"
+        rpm: 15
+        rpd: 1500
+      - name: "gemma-4-26b-a4b-it"
+        rpm: 15
+        rpd: 1500
     free: true
 
-  # OpenAI
+  # OpenAI example
   # - endpoint: "https://api.openai.com"
   #   key_env: "OPENAI_KEY"
   #   models:
-  #     - "gpt-4o-mini"
-  #     - "gpt-3.5-turbo"
+  #     - name: "gpt-4o-mini"
+  #       rpm: 500
+  #       rpd: 10000
   #   free: false
 
-  # Groq (free)
+  # Groq example (free)
   # - endpoint: "https://api.groq.com/openai"
   #   key_env: "GROQ_KEY"
   #   models:
-  #     - "llama-3.1-8b-instant"
-  #     - "mixtral-8x7b-32768"
+  #     - name: "llama-3.3-70b-versatile"
+  #       rpm: 30
+  #       rpd: 1000
   #   free: true
 
 bot:
