@@ -17,6 +17,14 @@ import (
 
 // ── Config Types ──────────────────────────────────
 
+type geminiErrorArray []struct {
+	Error struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	} `json:"error"`
+}
+
 type modelConfig struct {
 	Name string `yaml:"name"`
 	RPM  int    `yaml:"rpm"`
@@ -181,8 +189,21 @@ func (e *modelEntry) generate(ctx context.Context, system, prompt string) (strin
 		return "", fmt.Errorf("read body: %w", err)
 	}
 
+	trimmed := bytes.TrimSpace(respBody)
+
+	// Google sometimes returns errors as a JSON array
+	// instead of an object, e.g. quota exhausted errors.
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var errArr geminiErrorArray
+		if jerr := json.Unmarshal(trimmed, &errArr); jerr == nil && len(errArr) > 0 {
+			e := errArr[0].Error
+			return "", fmt.Errorf("api error [%d/%s]: %s", e.Code, e.Status, e.Message)
+		}
+		return "", fmt.Errorf("unexpected array response")
+	}
+
 	var cr chatResponse
-	if err := json.Unmarshal(respBody, &cr); err != nil {
+	if err := json.Unmarshal(trimmed, &cr); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)
 	}
 
