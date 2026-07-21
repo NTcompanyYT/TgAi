@@ -6,6 +6,9 @@ providers:
   - endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
     key_env: "GEMINI_KEY"
     models:
+      - name: "gemini-3.6-flash"
+        rpm: 5
+        rpd: 20
       - name: "gemini-3.5-flash"
         rpm: 5
         rpd: 20
